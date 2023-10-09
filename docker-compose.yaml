@@ -1,0 +1,226 @@
+version: "3.6"
+
+volumes:
+  shared-workspace:
+    name: "hadoop-distributed-file-system"
+    driver: local
+  mongodb_master_data:
+    driver: local
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    networks:
+      - localnet
+    container_name: zookeeper
+    ports:
+        - "22181:22181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka1:
+    image: confluentinc/cp-kafka:latest
+    networks:
+      - localnet
+    container_name: kafka1
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29093:29093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://:9092,PLAINTEXT_HOST://:29093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:9092, PLAINTEXT_HOST://localhost:29093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CREATE_TOPICS: "bike_rides:1:3"
+    healthcheck:
+      test: nc -z localhost 9092 || exit -1
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+  kafka2:
+    image: confluentinc/cp-kafka:latest
+    networks:
+      - localnet
+    container_name: kafka2
+    depends_on:
+      - zookeeper
+    ports:
+      - "9093:9093"
+      - "29094:29094"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://:9093,PLAINTEXT_HOST://:29094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka2:9093, PLAINTEXT_HOST://localhost:29094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT, PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+
+  producer:
+    image: producer
+    depends_on:
+      kafka1:
+        condition: service_healthy
+    build:
+      context: producer
+      dockerfile: Dockerfile
+    networks:
+      - localnet
+    container_name: producer
+
+  consumer:
+    image: consumer
+    depends_on:
+      kafka1:
+        condition: service_healthy
+    build:
+      context: consumer
+      dockerfile: Dockerfile
+    networks:
+      - localnet
+    container_name: consumer
+
+  mongo1:
+    image: 'bitnami/mongodb:6.0'
+    container_name: mongo1
+    ports:
+      - "27017:27017"
+    networks:
+      - localnet
+    environment:
+      - MONGODB_ADVERTISED_HOSTNAME=mongo1
+      - MONGODB_REPLICA_SET_MODE=primary
+      - MONGODB_ROOT_USER=root
+      - MONGODB_ROOT_PASSWORD=example
+      - MONGODB_REPLICA_SET_KEY=replicasetkey123
+    volumes:
+      - 'mongodb_master_data:/bitnami'
+
+  mongo2:
+    image: 'bitnami/mongodb:6.0'
+    container_name: mongo2
+    networks:
+      - localnet
+    depends_on:
+      - mongo1
+    environment:
+      - MONGODB_ADVERTISED_HOSTNAME=mongo2
+      - MONGODB_REPLICA_SET_MODE=secondary
+      - MONGODB_INITIAL_PRIMARY_HOST=mongo1
+      - MONGODB_INITIAL_PRIMARY_PORT_NUMBER=27017
+      - MONGODB_ROOT_USER=root
+      - MONGODB_INITIAL_PRIMARY_ROOT_PASSWORD=example
+      - MONGODB_REPLICA_SET_KEY=replicasetkey123
+
+  mongo3:
+    image: 'bitnami/mongodb:6.0'
+    container_name: mongo3
+    networks:
+      - localnet
+    depends_on:
+      - mongo1
+    environment:
+      - MONGODB_ADVERTISED_HOSTNAME=mongo3
+      - MONGODB_REPLICA_SET_MODE=secondary
+      - MONGODB_INITIAL_PRIMARY_HOST=mongo1
+      - MONGODB_ROOT_USER=root
+      - MONGODB_INITIAL_PRIMARY_PORT_NUMBER=27017
+      - MONGODB_INITIAL_PRIMARY_ROOT_PASSWORD=example
+      - MONGODB_REPLICA_SET_KEY=replicasetkey123
+
+  mongo-express:
+    image: mongo-express:1.0-18
+    container_name: mongo-express
+    networks:
+      - localnet
+    restart: always
+    ports:
+      - "8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongo1
+      - ME_CONFIG_MONGODB_PORT=27017
+      - ME_CONFIG_MONGODB_ENABLE_ADMIN=true
+      - ME_CONFIG_MONGODB_AUTH_USERNAME=root
+      - ME_CONFIG_MONGODB_AUTH_PASSWORD=example
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=root
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=example
+
+  spark-master:
+    image: bde2020/spark-master:3.3.0-hadoop3.3
+    container_name: spark-master
+    ports:
+      - 8090:8080
+      - 7077:7077
+    volumes:
+      - shared-workspace:/opt/workspace
+    networks:
+      - localnet
+    environment:
+      - ENABLE_INIT_DAEMON=false
+
+  spark-worker-1:
+    image: worker1
+    build:
+      context: sparkworker
+      dockerfile: Dockerfile
+    container_name: spark-worker-1
+    environment:
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=4g
+      - SPARK_MASTER=spark://spark-master:7077
+      - ENABLE_INIT_DAEMON=false
+    ports:
+      - 8085:8081
+      - 4041:4040
+    volumes:
+      - shared-workspace:/opt/workspace
+    depends_on:
+      - spark-master
+    networks:
+      - localnet
+
+  spark-worker-2:
+    image: worker2
+    build:
+      context: sparkworker
+      dockerfile: Dockerfile
+    container_name: spark-worker-2
+    environment:
+      - SPARK_WORKER_CORES=4
+      - SPARK_WORKER_MEMORY=4g
+      - SPARK_MASTER=spark://spark-master:7077
+      - ENABLE_INIT_DAEMON=false
+    ports:
+      - 8086:8081
+      - 4042:4040
+    volumes:
+      - shared-workspace:/opt/workspace
+    depends_on:
+      - spark-master
+    networks:
+      - localnet
+
+  scheduler:
+    image: scheduler
+    build:
+      context: scheduler
+      dockerfile: Dockerfile
+    volumes:
+      - shared-workspace:/opt/workspace
+    depends_on:
+      - spark-master
+    networks:
+      - localnet
+    container_name: scheduler
+
+networks:
+  localnet:
+    attachable: true
