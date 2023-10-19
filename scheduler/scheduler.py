@@ -125,7 +125,7 @@ def execute_weekly_mean(date_from, date_to):
 
     average_data = [(date_from, date_to, mean)]
 
-    average_columns = ["from", "too", "average_ride_time"]
+    average_columns = ["start_date", "end_date", "average_ride_time"]
 
     average = spark.createDataFrame(average_data, average_columns)
 
