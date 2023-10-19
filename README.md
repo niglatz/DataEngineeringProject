@@ -27,3 +27,6 @@ Mongo Express facilitates easy access to MongoDB. You can reach it at [http://lo
 
 - **Username:** admin
 - **Password:** pass
+
+Please note:
+The paginator in mongo-express is currently not working ->  [Github-issue](https://github.com/mongo-express/mongo-express-docker/issues/104)
